@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gisbi-kim conference-explorer 全文直链
 // @namespace    local.gisbi-kim-explorer-fulltext
-// @version      1.1.0
+// @version      1.1.1
 // @description  在论文详情弹窗注入 OpenReview PDF / arXiv / arXiv PDF / alphaXiv 直链；arXiv 按标题精确匹配，匹配不到时给搜索链接
 // @match        https://gisbi-kim.github.io/conference-explorers/*
 // @grant        GM_xmlhttpRequest
@@ -20,8 +20,9 @@
   let lastRequestAt = 0;
   const inflight = new Map();
 
-  // localStorage 缓存：normTitle -> {abs, pdf, id} | null（null = 已查过且无精确匹配）
-  const CACHE_KEY = 'ft-arxiv-cache';
+  // localStorage 缓存：normTitle -> { id } | null（null = 已查过且无精确匹配）
+  // 键带版本：v1 缓存存的是 {abs, pdf} 缺 id，换键作废
+  const CACHE_KEY = 'ft-arxiv-cache-v2';
   const loadCache = () => {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); }
     catch { return {}; }
@@ -36,7 +37,10 @@
 
   function fetchArxiv(title) {
     const key = norm(title);
-    if (key in store) return Promise.resolve(store[key]);
+    const cached = store[key];
+    if (cached === null) return Promise.resolve(null);
+    if (cached && typeof cached.id === 'string') return Promise.resolve(cached);
+    // 形状不符的旧缓存视为未命中，重新查询
     if (inflight.has(key)) return inflight.get(key);
 
     const task = (async () => {
@@ -63,14 +67,7 @@
         const t = (e.querySelector('title')?.textContent || '').replace(/\s+/g, ' ').trim();
         if (norm(t) !== want) continue;
         const m = (e.querySelector('id')?.textContent || '').match(/arxiv\.org\/abs\/([^v?#]+)/);
-        if (m) {
-          hit = {
-            id: m[1],
-            abs: 'https://arxiv.org/abs/' + m[1],
-            pdf: 'https://arxiv.org/pdf/' + m[1],
-          };
-          break;
-        }
+        if (m) { hit = { id: m[1] }; break; }
       }
       store[key] = hit;
       saveCache();
@@ -122,8 +119,8 @@
       const hit = await fetchArxiv(title);
       if (hit) {
         links.push(
-          ['arXiv', hit.abs],
-          ['arXiv PDF', hit.pdf],
+          ['arXiv', 'https://arxiv.org/abs/' + hit.id],
+          ['arXiv PDF', 'https://arxiv.org/pdf/' + hit.id],
           ['alphaXiv', 'https://www.alphaxiv.org/abs/' + hit.id],
         );
       } else {
